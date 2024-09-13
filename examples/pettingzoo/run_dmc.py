@@ -56,7 +56,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--env',
         type=str,
-        default='leduc-holdem',
+        default='uno',
         choices=[
             'blackjack',
             'leduc-holdem',
@@ -80,8 +80,8 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--xpid',
-        default='leduc_holdem',
-        help='Experiment id (default: leduc_holdem)',
+        default='uno',
+        help='Experiment id (default: uno)',
     )
     parser.add_argument(
         '--savedir',

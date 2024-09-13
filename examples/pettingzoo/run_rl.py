@@ -105,7 +105,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--env',
         type=str,
-        default='leduc-holdem',
+        default='uno',
         choices=[
             'leduc-holdem',
             'limit-holdem',
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--log_dir',
         type=str,
-        default='experiments/leduc_holdem_dqn_result/',
+        default='experiments/uno_dqn_result/',
     )
 
     args = parser.parse_args()

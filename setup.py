@@ -32,9 +32,6 @@ setuptools.setup(
     package_data={
         'rlcard': ['models/pretrained/leduc_holdem_cfr/*',
                    'games/uno/jsondata/action_space.json',
-                   'games/limitholdem/card2index.json',
-                   'games/leducholdem/card2index.json',
-                   'games/doudizhu/jsondata.zip',
                    'games/uno/jsondata/*',
                    ]},
     install_requires=[
