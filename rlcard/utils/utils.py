@@ -224,7 +224,7 @@ def tournament(env, num):
         payoffs[i] /= counter
     return payoffs
 
-def plot_curve(csv_path, save_path, algorithm):
+def plot_curve(csv_path, save_path, algorithm, title=''):
     ''' Read data from csv file and plot the results
     '''
     import os
@@ -242,6 +242,8 @@ def plot_curve(csv_path, save_path, algorithm):
         ax.set(xlabel='episode', ylabel='reward')
         ax.legend()
         ax.grid()
+        if title != '':
+            ax.set_title(title)
 
         save_dir = os.path.dirname(save_path)
         if not os.path.exists(save_dir):
