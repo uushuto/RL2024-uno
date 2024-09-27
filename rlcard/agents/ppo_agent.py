@@ -10,7 +10,9 @@ Transition = namedtuple('Transition', ['state', 'action', 'reward', 'next_state'
 
 class PPOAgent(object):
     def __init__(self, state_shape, action_shape, device=None,
-                 rollout_length=2048):
+                 batch_size=32, gamma=0.995, rollout_length=1024,
+                 num_updates=5, lr_actor=3e-4, lr_critic=3e-4,
+                 clip_eps=0.2, coef_ent=0.0, lambd=0.97, max_grad_norm=0.5):
         
         # Torch device
         if device is None:
@@ -20,10 +22,22 @@ class PPOAgent(object):
 
         self.total_t = 0
         self.learning_steps = 0
+        self.gamma = gamma
+        self.lambd = lambd
+        self.num_updates = num_updates
+        self.batch_size = batch_size
+        self.rollout_length = rollout_length
+        self.max_grad_norm = max_grad_norm
+        self.clip_eps = clip_eps
+        self.coef_ent = coef_ent
 
         self.actor = PPOActor(
             state_shape=state_shape,
             action_shape=action_shape,
+        )
+
+        self.critic = PPOCritic(
+            state_shape=state_shape,
         )
 
         self.buffer = RolloutBuffer(
@@ -32,7 +46,10 @@ class PPOAgent(object):
             action_shape=action_shape,
             device=self.device
         )
-    
+
+        self.optim_actor = torch.optim.Adam(self.actor.parameters(), lr=lr_actor)
+        self.optim_critic = torch.optim.Adam(self.critic.parameters(), lr=lr_critic) 
+
     def is_update(self, total_step):
         return total_step % self.rollout_length == 0
 
@@ -53,6 +70,49 @@ class PPOAgent(object):
     def step(self, state):
         action, _ = self.explore(state)
         return action
+    
+    def train(self):
+        self.learning_steps += 1
+        states, actions, rewards, dones, log_pis, next_states = self.buffer.get()
+        with torch.no_grad():
+            values = self.critic(states)
+            next_values = self.critic(next_states)
+        targets, advantages = calculate_advantage(values, rewards, dones, next_values, self.gammma, self.lambd)
+
+        for _ in range(self.num_updates):
+            indices = np.arange(self.rollout_length)
+            np.random.shuffle(indices)
+            
+            for start in range(0, self.rollout_length, self.batch_size):
+                idxes = indices[start:start+self.batch_size]
+                self.update_critic(states[idxes], targets[idxes])
+                self.update_actor(states[idxes], actions[idxes], log_pis[idxes], advantages[idxes])
+
+    def update_critic(self, states, targets):
+        loss_critic = (self.critic(states) - targets).pow_(2).mean()
+
+        self.optim_critic.zero_grad()
+        loss_critic.backward(retain_graph=False)
+        nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+        self.optim_critic.step()
+    
+    def update_actor(self, states, actions, log_pis_old, advantages):
+        log_pis = self.actor.evaluate_log_pi(states, actions)
+        mean_entropy = -log_pis.mean()
+
+        ratios = (log_pis - log_pis_old).exp_()
+        loss_actor1 = -ratios * advantages
+        loss_actor2 = -torch.clamp(
+            ratios,
+            1.0 - self.clip_eps,
+            1.0 + self.clip_eps
+        ) * advantages
+        loss_actor = torch.max(loss_actor1, loss_actor2).mean() - self.coef_ent * mean_entropy
+
+        self.optim_actor.zero_grad()
+        loss_actor.backward(retain_graph=False)
+        nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+        self.optim_actor.step()
 
 class PPOActor(nn.Module):
     def __init__(self, state_shape, action_shape):
@@ -75,6 +135,22 @@ class PPOActor(nn.Module):
 
     def evaluate_log_pi(self, states, actions):
         return evaluate_lop_pi(self.net(states), self.log_stds, actions)
+
+
+class PPOCritic(nn.Module):
+    def __init__(self, state_shape):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(state_shape[0], 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1),
+        )
+
+    def forward(self, states):
+        return self.net(states)
 
 
 class RolloutBuffer:
@@ -123,6 +199,16 @@ def reparameterize(means, log_stds):
         actions = torch.tanh(us)
         log_pis = calculate_log_pi(log_stds, noises, actions)
         return actions, log_pis
+
+def calculate_advantage(values, rewards, dones, next_values, gamma=0.995, lambd=0.997):
+    deltas = rewards + gamma * next_values * (1 - dones) - values
+    advantages = torch.empty_like(rewards)
+    advantages[-1] = deltas[-1]
+    for t in reversed(range(rewards.size(0) - 1)):
+        advantages[t] = deltas[t] + gamma * lambd * (1 - dones[t]) * advantages[t+1]
+    targets = advantages + values
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    return targets, advantages
 
 # MEMO TODO
 # - PPO, def feed, tuple->bufferにおける変数構造の調整
