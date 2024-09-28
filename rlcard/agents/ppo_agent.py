@@ -56,8 +56,8 @@ class PPOAgent(object):
 
     def feed(self, ts):
         (state, action, reward, next_state, done) = tuple(ts)
-        _, log_pi = self.explore(state)
-        self.buffer.append(state, action, reward, done, log_pi, next_state)
+        _, log_pi = self.explore(state['obs'])
+        self.buffer.append(state['obs'], action, reward, done, log_pi, next_state['obs'])
         self.total_t += 1
         if self.is_update(self.total_t):
             self.train()
@@ -69,7 +69,7 @@ class PPOAgent(object):
         return action.cpu().numpy()[0], log_pi.item()
     
     def step(self, state):
-        action, _ = self.explore(state)
+        action, _ = self.explore(state['obs'])
         return action
 
     def exploit(self, state):
@@ -79,7 +79,7 @@ class PPOAgent(object):
         return action.cpu().numpy()[0]
 
     def eval_step(self, state):
-        action = self.exploit(state)
+        action = self.exploit(state['obs'])
         return action, None
 
     def train(self):
@@ -220,7 +220,3 @@ def calculate_advantage(values, rewards, dones, next_values, gamma=0.995, lambd=
     targets = advantages + values
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     return targets, advantages
-
-# MEMO TODO
-# - PPO, def feed, tuple->bufferにおける変数構造の調整
-# - PPO, def step, log_piをtsのstate指定（tranjectories[0][-1][0]のstate['obs']）で計算
