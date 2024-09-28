@@ -71,7 +71,17 @@ class PPOAgent(object):
     def step(self, state):
         action, _ = self.explore(state)
         return action
-    
+
+    def exploit(self, state):
+        state = torch.tensor(state, dtype=torch.float, device=self.device).unsqueeze_(0)
+        with torch.no_grad():
+            action = self.actor(state)
+        return action.cpu().numpy()[0]
+
+    def eval_step(self, state):
+        action = self.exploit(state)
+        return action, None
+
     def train(self):
         self.learning_steps += 1
         states, actions, rewards, dones, log_pis, next_states = self.buffer.get()
@@ -214,4 +224,3 @@ def calculate_advantage(values, rewards, dones, next_values, gamma=0.995, lambd=
 # MEMO TODO
 # - PPO, def feed, tuple->bufferにおける変数構造の調整
 # - PPO, def step, log_piをtsのstate指定（tranjectories[0][-1][0]のstate['obs']）で計算
-# - PPO, def eval_stepの実装
