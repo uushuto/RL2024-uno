@@ -20,6 +20,7 @@ class PPOAgent(object):
         else:
             self.device = device
 
+        self.use_raw = False
         self.total_t = 0
         self.learning_steps = 0
         self.gamma = gamma
@@ -77,7 +78,7 @@ class PPOAgent(object):
         with torch.no_grad():
             values = self.critic(states)
             next_values = self.critic(next_states)
-        targets, advantages = calculate_advantage(values, rewards, dones, next_values, self.gammma, self.lambd)
+        targets, advantages = calculate_advantage(values, rewards, dones, next_values, self.gamma, self.lambd)
 
         for _ in range(self.num_updates):
             indices = np.arange(self.rollout_length)
@@ -213,3 +214,4 @@ def calculate_advantage(values, rewards, dones, next_values, gamma=0.995, lambd=
 # MEMO TODO
 # - PPO, def feed, tuple->bufferにおける変数構造の調整
 # - PPO, def step, log_piをtsのstate指定（tranjectories[0][-1][0]のstate['obs']）で計算
+# - PPO, def eval_stepの実装
