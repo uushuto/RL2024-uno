@@ -4,14 +4,15 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from collections import namedtuple
+from collections import namedtuple, deque
 
 Transition = namedtuple('Transition', ['state', 'action', 'reward', 'next_state', 'done', 'legal_actions'])
 
 class PPOAgent(object):
     def __init__(self, state_shape, action_shape, device=None,
                  batch_size=32, gamma=0.995, rollout_length=1024,
-                 num_updates=5, lr_actor=3e-4, lr_critic=3e-4,
+                 num_updates=5, lr_actor=3e-4, lr_critic=3e-4, num_actions=2,
+                 epsilon_start=1.0, epsilon_end=0.1, epsilon_decay_steps=1024,
                  clip_eps=0.2, coef_ent=0.0, lambd=0.97, max_grad_norm=0.5):
         
         # Torch device
@@ -31,15 +32,22 @@ class PPOAgent(object):
         self.max_grad_norm = max_grad_norm
         self.clip_eps = clip_eps
         self.coef_ent = coef_ent
+        
+        self.num_actions = num_actions
+        self.epsilon_decay_steps = epsilon_decay_steps
+        self.epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
+        self.queue_actions = deque()
+        self.queue_log_pis = deque()
 
         self.actor = PPOActor(
             state_shape=state_shape,
             action_shape=action_shape,
-        )
+            num_actions = num_actions
+        ).to(self.device)
 
         self.critic = PPOCritic(
             state_shape=state_shape,
-        )
+        ).to(self.device)
 
         self.buffer = RolloutBuffer(
             buffer_size=rollout_length,
@@ -55,8 +63,10 @@ class PPOAgent(object):
         return total_step % self.rollout_length == 0
 
     def feed(self, ts):
-        (state, action, reward, next_state, done) = tuple(ts)
-        _, log_pi = self.explore(state['obs'])
+        (state, _, reward, next_state, done) = tuple(ts)
+        # _, log_pi = self.explore(state['obs'])
+        action = self.queue_actions.popleft()
+        log_pi = self.queue_log_pis.popleft()
         self.buffer.append(state['obs'], action, reward, done, log_pi, next_state['obs'])
         self.total_t += 1
         if self.is_update(self.total_t):
@@ -69,8 +79,24 @@ class PPOAgent(object):
         return action.cpu().numpy()[0], log_pi.item()
     
     def step(self, state):
-        action, _ = self.explore(state['obs'])
-        return action
+        action, log_pi = self.explore(state['obs'])
+        
+        self.queue_actions.append(action)
+        self.queue_log_pis.append(log_pi)
+        
+        masked_action = -np.inf * np.ones(self.num_actions, dtype=float)
+        legal_actions = list(state['legal_actions'].keys())
+        masked_action[legal_actions] = action[legal_actions]
+        
+        epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps-1)]
+        # legal_actions = list(state['legal_actions'].keys())
+        probs = np.ones(len(legal_actions), dtype=float) * epsilon / len(legal_actions)
+        best_action_idx = legal_actions.index(np.argmax(masked_action))
+        probs[best_action_idx] += (1.0 - epsilon)
+        action_idx = np.random.choice(np.arange(len(probs)), p=probs)
+
+        return legal_actions[action_idx]
+        # return action
 
     def exploit(self, state):
         state = torch.tensor(state, dtype=torch.float, device=self.device).unsqueeze_(0)
@@ -80,7 +106,13 @@ class PPOAgent(object):
 
     def eval_step(self, state):
         action = self.exploit(state['obs'])
-        return action, None
+        
+        masked_action = -np.inf * np.ones(self.num_actions, dtype=float)
+        legal_actions = list(state['legal_actions'].keys())
+        masked_action[legal_actions] = action[legal_actions]
+        
+        best_action_idx = np.argmax(masked_action[legal_actions])
+        return legal_actions[best_action_idx], None
 
     def train(self):
         self.learning_steps += 1
@@ -126,26 +158,41 @@ class PPOAgent(object):
         self.optim_actor.step()
 
 class PPOActor(nn.Module):
-    def __init__(self, state_shape, action_shape):
+    def __init__(self, state_shape, action_shape, num_actions):
         super().__init__()
 
-        self.net = nn.Sequential(
-            nn.Linear(state_shape[0], 64),
-            nn.Tanh(),
-            nn.Linear(64, 64),
-            nn.Tanh(),
-            nn.Linear(64, action_shape[0]),
-        )
+        self.num_actions = num_actions
+        self.state_shape = state_shape
+        
+        layer_dims = [np.prod(self.state_shape)]
+        fc = [nn.Flatten()]
+        for i in range(len(layer_dims)-1):
+            fc.append(nn.Linear(layer_dims[i], layer_dims[i+1]))
+            fc.append(nn.Tanh())
+        fc.append(nn.Linear(layer_dims[-1], self.num_actions))
+        self.net = nn.Sequential(*fc)
+        
+        # self.net = nn.Sequential(
+        #     nn.Linear(4 * 4* 15, 64),
+        #     nn.Tanh(),
+        #     nn.Linear(64, 64),
+        #     nn.Tanh(),
+        #     nn.Linear(64, action_shape[0]),
+        # )
         self.log_stds = nn.Parameter(torch.zeros(1, action_shape[0]))
 
     def forward(self, states):
         return torch.tanh(self.net(states))
 
     def sample(self, states):
+        # states = states.view(-1, 4 * 4 * 15)
         return reparameterize(self.net(states), self.log_stds)
 
     def evaluate_log_pi(self, states, actions):
         return evaluate_lop_pi(self.net(states), self.log_stds, actions)
+
+# class PPOActorNetwork(nn.Module):
+    
 
 
 class PPOCritic(nn.Module):
@@ -153,7 +200,7 @@ class PPOCritic(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(state_shape[0], 64),
+            nn.Linear(4 * 4 * 15, 64),
             nn.Tanh(),
             nn.Linear(64, 64),
             nn.Tanh(),
@@ -161,6 +208,7 @@ class PPOCritic(nn.Module):
         )
 
     def forward(self, states):
+        states = states.view(-1, 4 * 4 * 15)
         return self.net(states)
 
 
@@ -220,3 +268,11 @@ def calculate_advantage(values, rewards, dones, next_values, gamma=0.995, lambd=
     targets = advantages + values
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     return targets, advantages
+
+# MEMO TODO
+# DONE Actor, Criticの入出力次元をdqn_agent.pyと同じように書き換え
+# DONE sampleのviewは不要となる？
+
+# DONE def step, actionをndarray -> ある1つに決定
+
+# def stepでactionとlog_piのndarrayを保存 => def feed, buffer保存時にaction, log_piはstep保存を仕様
