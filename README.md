@@ -1,3 +1,7 @@
+## プレゼンテーション資料
+行ったプロジェクトの詳細については、以下をご確認ください：
+https://docs.google.com/presentation/d/1quONbiqU0Ec5F9qS23G2IGNHdElRoDRqQBq_1DNKD0s/edit?usp=sharing
+
 # RLCard: A Toolkit for Reinforcement Learning in Card Games
 <img width="500" src="https://dczha.com/files/rlcard/logo.jpg" alt="Logo" />
 
